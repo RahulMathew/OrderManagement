@@ -2,7 +2,7 @@
 using OrderManagement.Domain.Common;
 using OrderManagement.Domain.Repositories.Abstractions;
 using OrderManagement.Application.Abstractions.Persistence;
-using OrderManagement.Application.Idempotency.Order;
+using OrderManagement.Application.Idempotency;
 
 namespace OrderManagement.Application.Commands.Order
 {

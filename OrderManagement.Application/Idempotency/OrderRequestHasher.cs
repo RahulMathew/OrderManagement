@@ -1,7 +1,7 @@
 ﻿using OrderManagement.Application.Common.Hasher;
 using OrderManagement.Application.Commands.Order;
 
-namespace OrderManagement.Application.Idempotency.Order
+namespace OrderManagement.Application.Idempotency
 {
     public static class OrderRequestHasher
     {
