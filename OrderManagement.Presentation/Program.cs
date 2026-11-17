@@ -6,7 +6,9 @@ using Microsoft.Identity.Web;
 using Microsoft.OpenApi;
 using OrderManagement.Application.Commands.Order;
 using OrderManagement.Infrastructure.DIRegistrations;
+using OrderManagement.Presentation.ExceptionHandling;
 using OrderManagement.Presentation.Middlewares;
+using OrderManagement.Presentation.Observability;
 
 namespace OrderManagement.Presentation
 {
@@ -17,54 +19,107 @@ namespace OrderManagement.Presentation
             var builder = WebApplication.CreateBuilder(args);
             builder.Services.AddScoped<SecurityMiddleware>();
 
-            // 1.Microsoft Entra ID / Azure AD Authentication and load secrets from Azure Key Vault
+            // 1. Microsoft Entra ID / Azure AD Authentication
+            // and load secrets from Azure Key Vault
             string? clientId = null;
             string? tenantId = null;
             string? kafkaBootstrapServers = null;
             string? kafkaTopic = null;
             string? dbConnectionString = null;
+            string? appInsightsConnectionString = null;
+            string? otlpEndpoint = null;
+            string? defaultLogLevel = null;
+            string? applicationLogLevel = null;
 
             string? keyVaultUrl = builder.Configuration["KeyVault:Url"];
-            if (!string.IsNullOrEmpty(keyVaultUrl))
+
+            if (!string.IsNullOrWhiteSpace(keyVaultUrl))
             {
                 var credential = new DefaultAzureCredential();
+
                 builder.Configuration.AddAzureKeyVault(new Uri(keyVaultUrl), credential);
 
                 var secretClient = new SecretClient(new Uri(keyVaultUrl), credential);
+
                 clientId = GetSecretValue(secretClient, "ClientId");
                 tenantId = GetSecretValue(secretClient, "TenantId");
-                
+
                 // Read Kafka settings from Azure Key Vault
                 kafkaBootstrapServers = GetSecretValue(secretClient, "Kafka--BootstrapServers");
+
                 kafkaTopic = GetSecretValue(secretClient, "Kafka--Topic");
+
+                // Read SQL Server connection string from Azure Key Vault
                 dbConnectionString = GetSecretValue(secretClient, "DbConnectionString");
+
+                // Application Insights
+                appInsightsConnectionString = GetSecretValue(secretClient, "ApplicationInsights--ConnectionString");
+
+                // OpenTelemetry Collector (optional)
+                otlpEndpoint = GetSecretValue(secretClient, "OpenTelemetry--OtlpEndpoint");
+
+                // Read logging levels from Azure Key Vault
+                defaultLogLevel = GetSecretValue(secretClient, "Logging--LogLevel--Default");
+
+                applicationLogLevel = GetSecretValue(secretClient, "Logging--LogLevel--OrderManagement");
             }
 
             var azureAd = builder.Configuration.GetSection("AzureAd");
-            if (!string.IsNullOrEmpty(clientId) && !string.IsNullOrEmpty(tenantId))
+
+            if (!string.IsNullOrWhiteSpace(clientId) &&
+                !string.IsNullOrWhiteSpace(tenantId))
             {
                 azureAd["ClientId"] = clientId;
                 azureAd["TenantId"] = tenantId;
             }
 
             // Update Kafka configuration
-            if (!string.IsNullOrEmpty(kafkaBootstrapServers))
-            {
-                builder.Configuration["Kafka:BootstrapServers"] =
-                    kafkaBootstrapServers;
-            }
+            if (!string.IsNullOrWhiteSpace(kafkaBootstrapServers))
+                builder.Configuration["Kafka:BootstrapServers"] = kafkaBootstrapServers;
 
-            if (!string.IsNullOrEmpty(kafkaTopic))
-            {
+            if (!string.IsNullOrWhiteSpace(kafkaTopic))
                 builder.Configuration["Kafka:Topic"] = kafkaTopic;
-            }
 
             // Update SQL Server connection string from Azure Key Vault
             if (!string.IsNullOrWhiteSpace(dbConnectionString))
+                builder.Configuration["ConnectionStrings:DefaultConnection"] = dbConnectionString;
+
+            // Application Insights configuration
+            if (!string.IsNullOrWhiteSpace(appInsightsConnectionString))
+                builder.Configuration["ApplicationInsights:ConnectionString"] = appInsightsConnectionString;
+
+            // OpenTelemetry Collector configuration
+            if (!string.IsNullOrWhiteSpace(otlpEndpoint))
+                builder.Configuration["OpenTelemetry:OtlpEndpoint"] = otlpEndpoint;
+
+            // Logging configuration
+
+            // Default to Error if Key Vault value is missing or invalid
+            if (!Enum.TryParse<LogLevel>(defaultLogLevel,
+                    ignoreCase: true,
+                    out var logLevel)
+                || !Enum.IsDefined(logLevel))
             {
-                builder.Configuration["ConnectionStrings:DefaultConnection"] =
-                    dbConnectionString;
+                logLevel = LogLevel.Error;
             }
+
+            // Application-specific logging level
+            // Default to the configured default level if missing or invalid
+            if (!Enum.TryParse<LogLevel>(applicationLogLevel,
+                    ignoreCase: true,
+                    out var appLogLevel)
+                || !Enum.IsDefined(appLogLevel))
+            {
+                appLogLevel = logLevel;
+            }
+
+            // Update application logging configuration
+            builder.Configuration["Logging:LogLevel:Default"] = logLevel.ToString();
+
+            builder.Configuration["Logging:LogLevel:OrderManagement"] = appLogLevel.ToString();
+
+            // Configure OpenTelemetry and Application Insights
+            builder.Services.AddObservability(builder.Configuration);
 
             builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                 .AddMicrosoftIdentityWebApi(azureAd);
@@ -94,8 +149,7 @@ namespace OrderManagement.Presentation
                     Version = "v1"
                 });
 
-                options.AddSecurityDefinition(
-                    "Bearer",
+                options.AddSecurityDefinition("Bearer",
                     new OpenApiSecurityScheme
                     {
                         Name = "Authorization",
@@ -108,11 +162,17 @@ namespace OrderManagement.Presentation
                     });
             });
 
+            // 6. Global Exception Handler
+            builder.Services.AddExceptionHandler<GlobalExceptionHandler>();
+            builder.Services.AddProblemDetails();
+
             var app = builder.Build();
 
-            // 6. Swagger
-            if (app.Configuration.GetValue<bool>(
-                "EnableSwagger", true))
+            // 7. Global Exception Handling Middleware
+            app.UseExceptionHandler();
+
+            // 8. Swagger
+            if (app.Configuration.GetValue<bool>("EnableSwagger", true))
             {
                 app.UseSwagger();
 
@@ -124,13 +184,13 @@ namespace OrderManagement.Presentation
                 });
             }
 
-            // 7. Middleware
+            // 9. Middleware
             app.UseHttpsRedirection();
 
             app.UseAuthentication();
             app.UseAuthorization();
 
-            // 8. Controllers
+            // 10. Controllers
             app.MapControllers();
 
             app.Run();
@@ -142,16 +202,20 @@ namespace OrderManagement.Presentation
             {
                 try
                 {
-                    var secretValue = client.GetSecret(secretName).Value.Value;
+                    var secretValue = client
+                        .GetSecret(secretName)
+                        .Value.Value;
 
                     if (!string.IsNullOrWhiteSpace(secretValue))
                     {
                         return secretValue;
                     }
                 }
-                catch (RequestFailedException)
+                catch (RequestFailedException ex)
+                    when (ex.Status == 404)
                 {
-                    // Secret not found in Key Vault; continue checking alternate names.
+                    // Secret not found in Key Vault;
+                    // continue checking alternate names.
                 }
             }
 
@@ -159,5 +223,3 @@ namespace OrderManagement.Presentation
         }
     }
 }
-
-
