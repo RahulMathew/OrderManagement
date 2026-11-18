@@ -27,17 +27,10 @@ namespace OrderManagement.Infrastructure.Persistence.Repositories
             var message = await GetByIdAsync(messageId, cancellationToken);
 
             if (message is null)
-            {
-                return Result.Failure(
-                    new Error(
-                        "Outbox.NotFound",
-                        $"Outbox message {messageId} not found."));
-            }
+                return Result.Failure(new Error("Outbox.NotFound", $"Outbox message {messageId} not found."));
 
             if (message.ProcessedOnUtc is not null)
-            {
                 return Result.Success();
-            }
 
             message.MarkProcessed();
 
