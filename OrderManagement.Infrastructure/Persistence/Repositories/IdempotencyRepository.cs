@@ -4,18 +4,16 @@ using OrderManagement.Infrastructure.Idempotency;
 
 namespace OrderManagement.Infrastructure.Persistence.Repositories
 {
-    public sealed class IdempotencyRepository : IIdempotencyRepository
+    public sealed class IdempotencyRepository : BaseRepository<IdempotencyRecord>, IIdempotencyRepository
     {
-        private readonly AppDbContext _context;
-
-        public IdempotencyRepository(AppDbContext context)
+        public IdempotencyRepository(AppDbContext context) : base(context)
         {
-            _context = context;
+            
         }
 
         public async Task<IdempotencyEntry?> GetByKeyAsync(string key, CancellationToken cancellationToken = default)
         {
-            return await _context.Set<IdempotencyRecord>()
+            return await Context.Set<IdempotencyRecord>()
                 .AsNoTracking()
                 .Where(x => x.Key == key)
                 .Select(x => new IdempotencyEntry(
@@ -29,12 +27,11 @@ namespace OrderManagement.Infrastructure.Persistence.Repositories
             Guid orderId,
             CancellationToken cancellationToken = default)
         {
-            var record = IdempotencyRecord.Create(key,
+            var record = IdempotencyRecord.Create(key, 
                 requestHash,
                 orderId);
 
-            await _context.Set<IdempotencyRecord>()
-                .AddAsync(record, cancellationToken);
+            await AddAsync(record, cancellationToken);
         }
     }
 }
