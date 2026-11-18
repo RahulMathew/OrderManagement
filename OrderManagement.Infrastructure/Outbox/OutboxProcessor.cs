@@ -49,11 +49,11 @@ namespace OrderManagement.Infrastructure.Outbox
             {
                 using var scope = _scopeFactory.CreateScope();
 
-                var repository = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
+                var outboxRepository = scope.ServiceProvider.GetRequiredService<IOutboxRepository>();
                 var unitOfWork = scope.ServiceProvider.GetRequiredService<IUnitOfWork>();
-                var publisher = scope.ServiceProvider.GetRequiredService<IKafkaPublisher>();
+                var kafkaPublisher = scope.ServiceProvider.GetRequiredService<IKafkaPublisher>();
 
-                var messages = await repository.GetPendingAsync(BatchSize, cancellationToken);
+                var messages = await outboxRepository.GetPendingAsync(BatchSize, cancellationToken);
 
                 foreach (var message in messages)
                 {
@@ -62,13 +62,22 @@ namespace OrderManagement.Infrastructure.Outbox
                     try
                     {
                         // Step 1: Publish to Kafka
-                        await publisher.PublishAsync(message.Id,
+                        await kafkaPublisher.PublishAsync(message.Id,
                             message.EventType,
                             message.Payload,
                             cancellationToken);
 
                         // Step 2: Mark message as processed
-                        await repository.MarkProcessedAsync(message.Id, cancellationToken);
+                        var result = await outboxRepository.MarkProcessedAsync(message.Id, cancellationToken);
+
+                        if (!result.IsSuccess)
+                        {
+                            _logger.LogWarning("Unable to mark Outbox message {MessageId} as processed. {Error}",
+                                message.Id,
+                                result.Error?.Message);
+
+                            continue;
+                        }
 
                         // Step 3: Commit through UnitOfWork
                         await unitOfWork.SaveChangesAsync(cancellationToken);

@@ -1,4 +1,5 @@
 ﻿using Microsoft.EntityFrameworkCore;
+using OrderManagement.Domain.Common;
 using OrderManagement.Infrastructure.Outbox;
 using OrderManagement.Infrastructure.Persistence.Repositories.Abstractions;
 
@@ -21,19 +22,29 @@ namespace OrderManagement.Infrastructure.Persistence.Repositories
                 .ToListAsync(cancellationToken);
         }
 
-        public async Task MarkProcessedAsync(Guid messageId, CancellationToken cancellationToken = default)
+        public async Task<Result> MarkProcessedAsync(Guid messageId, CancellationToken cancellationToken = default)
         {
-            var message = await Context.OutboxMessages.FirstOrDefaultAsync(x => x.Id == messageId, cancellationToken);
+            var message = await GetByIdAsync(messageId, cancellationToken);
 
             if (message is null)
             {
-                throw new InvalidOperationException($"Outbox message {messageId} not found.");
+                return Result.Failure(
+                    new Error(
+                        "Outbox.NotFound",
+                        $"Outbox message {messageId} not found."));
+            }
+
+            if (message.ProcessedOnUtc is not null)
+            {
+                return Result.Success();
             }
 
             message.MarkProcessed();
 
-            // No SaveChangesAsync here.
-            // UnitOfWork will commit the change.
+            // EF Core tracks the entity.
+            // UnitOfWork commits the change.
+
+            return Result.Success();
         }
     }
 }
