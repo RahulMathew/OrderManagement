@@ -59,21 +59,18 @@ namespace OrderManagement.Infrastructure.Persistence
         public async Task BeginTransactionAsync(CancellationToken cancellationToken = default)
         {
             if (_transaction is not null || _inMemoryTransactionActive)
-            {
-                throw new InvalidOperationException(
-                    "A transaction is already active.");
-            }
+                throw new InvalidOperationException("A transaction is already active.");
 
             if (IsInMemory)
             {
                 // InMemory does not support transactions.
                 // Track the call for development compatibility only.
                 _inMemoryTransactionActive = true;
+                
                 return;
             }
 
-            _transaction = await _context.Database
-                .BeginTransactionAsync(cancellationToken);
+            _transaction = await _context.Database.BeginTransactionAsync(cancellationToken);
         }
 
         public async Task CommitTransactionAsync(CancellationToken cancellationToken = default)
@@ -81,10 +78,7 @@ namespace OrderManagement.Infrastructure.Persistence
             if (IsInMemory)
             {
                 if (!_inMemoryTransactionActive)
-                {
-                    throw new InvalidOperationException(
-                        "No active transaction to commit.");
-                }
+                    throw new InvalidOperationException("No active transaction to commit.");
 
                 // No real commit occurs for InMemory.
                 // SaveChangesAsync already persisted the changes.
@@ -94,10 +88,7 @@ namespace OrderManagement.Infrastructure.Persistence
             }
 
             if (_transaction is null)
-            {
-                throw new InvalidOperationException(
-                    "No active transaction to commit.");
-            }
+                throw new InvalidOperationException("No active transaction to commit.");
 
             await _transaction.CommitAsync(cancellationToken);
 
@@ -121,8 +112,7 @@ namespace OrderManagement.Infrastructure.Persistence
 
             try
             {
-                await _transaction.RollbackAsync(
-                    cancellationToken);
+                await _transaction.RollbackAsync(cancellationToken);
             }
             finally
             {
